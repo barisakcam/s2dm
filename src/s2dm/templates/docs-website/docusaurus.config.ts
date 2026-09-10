@@ -8,6 +8,7 @@ import { fileURLToPath } from "url";
 const require = createRequire(import.meta.url);
 const sourceDirectory = fileURLToPath(new URL("./src", import.meta.url));
 const insightsUiDirectory = fileURLToPath(new URL("./src/insights-ui", import.meta.url));
+const ledgerUiDirectory = fileURLToPath(new URL("./src/ledger-ui", import.meta.url));
 
 function addBaseUrlToSidebar(items: PropSidebar, baseUrl: string): PropSidebar {
   const addBaseUrl = (href: string) =>
@@ -62,7 +63,15 @@ const insightsPlugin = ({ baseUrl }: LoadContext) => ({
     }
   },
   configureWebpack() {
-    return { resolve: { alias: { "@": sourceDirectory, "@insights-ui": insightsUiDirectory } } };
+    return {
+      resolve: {
+        alias: {
+          "@": sourceDirectory,
+          "@insights-ui": insightsUiDirectory,
+          "@ledger-ui": ledgerUiDirectory,
+        },
+      },
+    };
   },
   configurePostCss(options) {
     options.plugins.push(require("@tailwindcss/postcss"));
@@ -98,6 +107,7 @@ const config: Config = {
         { type: "docSidebar", sidebarId: "tutorialSidebar", position: "left", label: "Docs" },
         { to: "/visualizer", label: "Visualizer", position: "left" },
         { to: "/insights", label: "Insights", position: "left" },
+        { to: "/ledger", label: "Ledger", position: "left" },
         { href: "$github_repo_url", label: "GitHub", position: "right" },
       ],
     },
