@@ -352,8 +352,29 @@ def print_schema_with_directives_preserved(schema: GraphQLSchema, source_map: di
                 existing_directives.append(f'@reference(source: "{source_filename}")')
                 directive_map[type_name] = existing_directives
 
-    base_schema = print_schema(schema)
+    base_schema = _without_empty_query_type(schema, print_schema(schema))
     return add_directives_to_schema(base_schema, directive_map)
+
+
+def _without_empty_query_type(schema: GraphQLSchema, printed_schema: str) -> str:
+    """Drop a query root left with no fields, which GraphQL does not accept as a type.
+
+    Selecting only definitions leaves nothing on the query root, and an object type with no
+    fields is invalid. The remaining definitions compose into a model that has one.
+
+    Args:
+        schema: The schema that was printed.
+        printed_schema: Its printed form.
+
+    Returns:
+        The printed schema without an empty query root declaration.
+    """
+    query_type = schema.query_type
+    if query_type is None or query_type.fields:
+        return printed_schema
+
+    declaration = re.compile(rf"^type {re.escape(query_type.name)}$\n?", re.MULTILINE)
+    return declaration.sub("", printed_schema).rstrip() + "\n"
 
 
 def compose_schemas_to_string(

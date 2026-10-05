@@ -35,6 +35,7 @@ import {
 } from "@/store/selection/selectionSlice";
 import { downloadTextFile } from "@/utils/download";
 import { getErrorMessage } from "@/utils/getErrorMessage";
+import { withPickDirective } from "@/utils/selectionQuery";
 import "@graphiql/react/style.css";
 import "@/components/graphiql-theme.css";
 
@@ -76,7 +77,7 @@ export function ExplorerTab() {
 	const graphqlSchema = useMemo(() => {
 		if (!originalSchema?.trim()) return undefined;
 		try {
-			return buildSchema(originalSchema);
+			return buildSchema(withPickDirective(originalSchema));
 		} catch {
 			return undefined;
 		}
