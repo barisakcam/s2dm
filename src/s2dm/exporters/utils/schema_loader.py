@@ -53,11 +53,10 @@ from s2dm.exporters.utils.instance_tag import expand_instances_in_schema, is_val
 from s2dm.exporters.utils.naming import apply_naming_to_schema, convert_name, load_naming_config
 from s2dm.exporters.utils.naming_config import ContextType, ElementType, NamingConventionConfig, get_case_for_element
 from s2dm.exporters.utils.pick import (
-    extract_picked_definitions,
+    extract_and_validate_picks,
     parse_selection_query,
     picked_directive_names,
     picked_type_names,
-    validate_picked_definitions,
 )
 from s2dm.exporters.utils.violations import ConstraintViolation, Severity
 from s2dm.ledger import Ledger, annotate_schema_with_ledger
@@ -352,23 +351,27 @@ def print_schema_with_directives_preserved(schema: GraphQLSchema, source_map: di
                 existing_directives.append(f'@reference(source: "{source_filename}")')
                 directive_map[type_name] = existing_directives
 
-    base_schema = _without_empty_query_type(schema, print_schema(schema))
+    base_schema = _print_schema_without_empty_query_type(schema)
     return add_directives_to_schema(base_schema, directive_map)
 
 
-def _without_empty_query_type(schema: GraphQLSchema, printed_schema: str) -> str:
+def _print_schema_without_empty_query_type(schema: GraphQLSchema) -> str:
     """Drop a query root left with no fields, which GraphQL does not accept as a type.
 
     Selecting only definitions leaves nothing on the query root, and an object type with no
     fields is invalid. The remaining definitions compose into a model that has one.
 
     Args:
-        schema: The schema that was printed.
-        printed_schema: Its printed form.
+        schema: The schema to print.
 
     Returns:
         The printed schema without an empty query root declaration.
+
+    Note:
+        Runs before add_directives_to_schema, so a type prints without directives and the
+        declaration is matched whole.
     """
+    printed_schema = print_schema(schema)
     query_type = schema.query_type
     if query_type is None or query_type.fields:
         return printed_schema
@@ -601,8 +604,7 @@ def prune_schema_using_query_selection(
     if not schema.query_type:
         raise ValueError("Schema has no query type defined")
 
-    stripped_document, picked = extract_picked_definitions(document)
-    validate_picked_definitions(schema, picked)
+    stripped_document, picked = extract_and_validate_picks(schema, document)
 
     _validate_schema(schema, stripped_document)
 

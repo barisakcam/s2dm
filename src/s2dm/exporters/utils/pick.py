@@ -1,6 +1,7 @@
 """Parsing, extraction and validation of the @pick selection query directive."""
 
 import re
+from copy import copy
 from dataclasses import dataclass
 from typing import Any
 
@@ -13,11 +14,11 @@ from graphql import (
     parse,
 )
 from graphql.error import GraphQLSyntaxError
-from graphql.language.ast import DirectiveNode, OperationDefinitionNode
+from graphql.language.ast import DirectiveNode, OperationDefinitionNode, OperationType
 from graphql.utilities import value_from_ast_untyped
 
-from s2dm import log
 from s2dm.constants.directive import Directive
+from s2dm.exporters.utils.graphql_type import is_introspection_type
 
 DIRECTIVE_NAME = Directive.PICK.value
 
@@ -129,60 +130,55 @@ def _read_directive_arguments(directive_node: DirectiveNode) -> PickedDefinition
 
 
 def _without_pick(definition: OperationDefinitionNode) -> OperationDefinitionNode:
-    """Return the operation with @pick removed from the directives applied to it."""
-    remaining = tuple(node for node in definition.directives if node.name.value != Directive.PICK)
-    return OperationDefinitionNode(
-        operation=definition.operation,
-        name=definition.name,
-        variable_definitions=definition.variable_definitions,
-        directives=remaining,
-        selection_set=definition.selection_set,
-        loc=definition.loc,
+    """Return a copy of the operation with @pick removed from the directives applied to it."""
+    stripped_definition = copy(definition)
+    stripped_definition.directives = tuple(
+        directive for directive in definition.directives if directive.name.value != DIRECTIVE_NAME
     )
+    return stripped_definition
 
 
-def extract_picked_definitions(document: DocumentNode) -> tuple[DocumentNode, PickedDefinitions]:
-    """Remove @pick from every operation and read it from the first query operation.
+def _extract_picked_definitions(document: DocumentNode) -> tuple[DocumentNode, PickedDefinitions]:
+    """Remove @pick from the query operation and read the definitions it asks to keep.
 
     The directive is defined by S2DM rather than by the model, so it is taken out of the document
-    before the document is validated against the schema. Later operations are stripped as well,
-    since only the first query operation is read.
+    before the document is validated against the schema.
 
     Args:
         document: The parsed selection query document.
 
     Returns:
         The document without the directive, and the definitions it asked to keep.
+
+    Raises:
+        ValueError: If @pick is applied more than once, or carries an argument it does not define.
     """
-    picked = PickedDefinitions()
-    seen_first_query = False
-    definitions = []
+    query_operations = (
+        definition
+        for definition in document.definitions
+        if isinstance(definition, OperationDefinitionNode) and definition.operation == OperationType.QUERY
+    )
+    query_operation = next(query_operations, None)
+    if query_operation is None:
+        return document, PickedDefinitions()
 
-    for definition in document.definitions:
-        if not isinstance(definition, OperationDefinitionNode):
-            definitions.append(definition)
-            continue
+    applied_directives = [
+        directive for directive in query_operation.directives if directive.name.value == DIRECTIVE_NAME
+    ]
+    if not applied_directives:
+        return document, PickedDefinitions()
+    if len(applied_directives) > 1:
+        raise ValueError(f"@{DIRECTIVE_NAME} is applied more than once on one operation")
 
-        applied_directives = [node for node in definition.directives if node.name.value == Directive.PICK]
-        is_query = definition.operation.value == "query"
-
-        if applied_directives and is_query and not seen_first_query:
-            if len(applied_directives) > 1:
-                raise ValueError(f"@{DIRECTIVE_NAME} is applied more than once on one operation")
-            picked = _read_directive_arguments(applied_directives[0])
-        elif applied_directives:
-            log.warning(f"Ignoring @{DIRECTIVE_NAME} outside the first query operation")
-
-        seen_first_query = seen_first_query or is_query
-
-        if applied_directives:
-            definition = _without_pick(definition)
-        definitions.append(definition)
-
-    return DocumentNode(definitions=tuple(definitions), loc=document.loc), picked
+    picked = _read_directive_arguments(applied_directives[0])
+    stripped_query = _without_pick(query_operation)
+    definitions = tuple(
+        stripped_query if definition is query_operation else definition for definition in document.definitions
+    )
+    return DocumentNode(definitions=definitions, loc=document.loc), picked
 
 
-def validate_picked_definitions(schema: GraphQLSchema, picked: PickedDefinitions) -> None:
+def _validate_picked_definitions(schema: GraphQLSchema, picked: PickedDefinitions) -> None:
     """Check every name and definition kind in the selection against the source model.
 
     A name given under the wrong argument is reported as such, since a directive and a type can
@@ -195,7 +191,6 @@ def validate_picked_definitions(schema: GraphQLSchema, picked: PickedDefinitions
     Raises:
         ValueError: If any name is missing from the model or is of the wrong kind.
     """
-    errors: list[str] = []
     directive_names = {directive.name for directive in schema.directives}
 
     def argument_for_type(type_definition: GraphQLNamedType | None) -> str | None:
@@ -205,43 +200,69 @@ def validate_picked_definitions(schema: GraphQLSchema, picked: PickedDefinitions
                 return argument_name
         return None
 
-    def actual_argument(name: str) -> str | None:
+    def argument_accepting(name: str) -> str | None:
         """The argument the name belongs under, or None when the model does not define it."""
         if name in directive_names:
             return DIRECTIVES_ARGUMENT
         type_definition = schema.type_map.get(name)
         return argument_for_type(type_definition)
 
-    def collect_errors(picked_names: PickSelection, argument_name: str, label: str) -> None:
-        """Record an error for every name that does not belong under the given argument."""
+    def collect_errors(picked_names: PickSelection, argument_name: str, label: str) -> list[str]:
+        """Every name under the given argument that does not belong there, as an error."""
         if not isinstance(picked_names, list):
-            return
+            return []
+        collected: list[str] = []
         for name in picked_names:
-            belongs_under = actual_argument(name)
+            if is_introspection_type(name):
+                collected.append(f"'{name}' starts with '__', which GraphQL reserves for introspection")
+                continue
+            belongs_under = argument_accepting(name)
             if belongs_under == argument_name:
                 continue
             if belongs_under is not None:
-                errors.append(f"'{name}' is not {label}; list it under '{belongs_under}'")
+                collected.append(f"'{name}' is not {label}; list it under '{belongs_under}'")
                 continue
             if name in schema.type_map:
-                errors.append(f"'{name}' is not {label}")
+                collected.append(f"'{name}' is not {label}")
                 continue
             subject = f"directive '@{name}'" if argument_name == DIRECTIVES_ARGUMENT else f"'{name}'"
-            errors.append(f"{subject} is not defined in the model")
+            collected.append(f"{subject} is not defined in the model")
+        return collected
 
-    collect_errors(picked.scalars, SCALARS_ARGUMENT, "a scalar")
-    collect_errors(picked.enums, ENUMS_ARGUMENT, "an enum")
-    collect_errors(picked.directives, DIRECTIVES_ARGUMENT, "a directive")
+    errors = [
+        *collect_errors(picked.scalars, SCALARS_ARGUMENT, "a scalar"),
+        *collect_errors(picked.enums, ENUMS_ARGUMENT, "an enum"),
+        *collect_errors(picked.directives, DIRECTIVES_ARGUMENT, "a directive"),
+    ]
 
     if errors:
         raise ValueError(f"@{DIRECTIVE_NAME} validation failed:\n" + "\n".join(f"  - {error}" for error in errors))
+
+
+def extract_and_validate_picks(schema: GraphQLSchema, document: DocumentNode) -> tuple[DocumentNode, PickedDefinitions]:
+    """Remove @pick from the document and check the definitions it names against the model.
+
+    Args:
+        schema: The unfiltered schema the selection is written against.
+        document: The parsed selection query.
+
+    Returns:
+        The document without @pick, and the definitions @pick asked to keep.
+
+    Raises:
+        ValueError: If @pick is malformed or names a definition the model does not have.
+    """
+    stripped_document, picked = _extract_picked_definitions(document)
+    _validate_picked_definitions(schema, picked)
+    return stripped_document, picked
 
 
 def picked_type_names(schema: GraphQLSchema, picked: PickedDefinitions) -> list[str]:
     """Names of the scalar and enum types the selection keeps regardless of references."""
     type_names: list[str] = []
 
-    for picked_names, kind in ((picked.scalars, GraphQLScalarType), (picked.enums, GraphQLEnumType)):
+    selections_by_kind = ((picked.scalars, GraphQLScalarType), (picked.enums, GraphQLEnumType))
+    for picked_names, kind in selections_by_kind:
         if picked_names is ALL:
             type_names += [
                 name for name, type_definition in schema.type_map.items() if isinstance(type_definition, kind)
@@ -249,7 +270,7 @@ def picked_type_names(schema: GraphQLSchema, picked: PickedDefinitions) -> list[
         elif isinstance(picked_names, list):
             type_names += picked_names
 
-    return [name for name in type_names if not name.startswith("__")]
+    return [name for name in type_names if not is_introspection_type(name)]
 
 
 def picked_directive_names(schema: GraphQLSchema, picked: PickedDefinitions) -> list[str]:

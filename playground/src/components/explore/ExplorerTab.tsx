@@ -77,7 +77,8 @@ export function ExplorerTab() {
 	const graphqlSchema = useMemo(() => {
 		if (!originalSchema?.trim()) return undefined;
 		try {
-			return buildSchema(withPickDirective(originalSchema));
+			const schemaText = withPickDirective(originalSchema);
+			return buildSchema(schemaText);
 		} catch {
 			return undefined;
 		}

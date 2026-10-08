@@ -1,10 +1,7 @@
 import { QueryEditor, useEditorContext, useGraphiQL } from "@graphiql/react";
 import { validate } from "graphql";
 import { useEffect, useRef } from "react";
-import {
-	parseSelectionQuery,
-	withoutPickDirective,
-} from "@/utils/selectionQuery";
+import { parseSelectionQuery } from "@/utils/selectionQuery";
 
 type QueryEditorWrapperProps = {
 	selectionQuery: string;
@@ -41,8 +38,7 @@ export function QueryEditorWrapper({
 			}
 
 			try {
-				const parsed = parseSelectionQuery(query);
-				const document = withoutPickDirective(parsed);
+				const document = parseSelectionQuery(query);
 				if (schema) {
 					const errors = validate(schema, document);
 					onValidationChange(errors.length > 0);

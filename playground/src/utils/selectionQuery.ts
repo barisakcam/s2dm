@@ -1,11 +1,10 @@
 import type { DocumentNode } from "graphql";
-import { Kind, parse } from "graphql";
+import { parse } from "graphql";
 
-// GraphQL rejects an empty selection set, and @pick is defined by s2dm rather than by the
-// model, so a selection query the server accepts does not parse or validate here untouched.
+// GraphQL rejects an empty selection set, so a selection query the server accepts does
+// not parse here untouched.
 const EMPTY_SELECTION_SET = /\{\s*\}\s*$/;
 const NOTHING_SELECTED = "{ __typename }";
-const PICK_DIRECTIVE = "pick";
 
 /**
  * Parse a selection query, reading an empty selection set as selecting no fields.
@@ -24,30 +23,6 @@ export function parseSelectionQuery(text: string): DocumentNode {
 		}
 		return parse(repaired);
 	}
-}
-
-/**
- * Remove @pick from every operation so the document can be validated against the model,
- * which does not define the directive.
- */
-export function withoutPickDirective(document: DocumentNode): DocumentNode {
-	return {
-		...document,
-		definitions: document.definitions.map((definition) => {
-			if (
-				definition.kind !== Kind.OPERATION_DEFINITION ||
-				!definition.directives?.length
-			) {
-				return definition;
-			}
-			return {
-				...definition,
-				directives: definition.directives.filter(
-					(directive) => directive.name.value !== PICK_DIRECTIVE,
-				),
-			};
-		}),
-	};
 }
 
 // The model does not define @pick, so an editor validating against it alone underlines every
