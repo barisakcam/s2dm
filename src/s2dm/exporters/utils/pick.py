@@ -200,12 +200,17 @@ def _validate_picked_definitions(schema: GraphQLSchema, picked: PickedDefinition
                 return argument_name
         return None
 
-    def argument_accepting(name: str) -> str | None:
-        """The argument the name belongs under, or None when the model does not define it."""
-        if name in directive_names:
-            return DIRECTIVES_ARGUMENT
+    def defining_arguments(name: str) -> set[str]:
+        """Every argument whose namespace defines this name.
+
+        Types and directives occupy separate namespaces, so one name can be defined in both.
+        """
         type_definition = schema.type_map.get(name)
-        return argument_for_type(type_definition)
+        type_argument = argument_for_type(type_definition)
+        arguments = {type_argument} if type_argument is not None else set()
+        if name in directive_names:
+            arguments.add(DIRECTIVES_ARGUMENT)
+        return arguments
 
     def collect_errors(picked_names: PickSelection, argument_name: str, label: str) -> list[str]:
         """Every name under the given argument that does not belong there, as an error."""
@@ -216,11 +221,12 @@ def _validate_picked_definitions(schema: GraphQLSchema, picked: PickedDefinition
             if is_introspection_type(name):
                 collected.append(f"'{name}' starts with '__', which GraphQL reserves for introspection")
                 continue
-            belongs_under = argument_accepting(name)
-            if belongs_under == argument_name:
+            defined_under = defining_arguments(name)
+            if argument_name in defined_under:
                 continue
-            if belongs_under is not None:
-                collected.append(f"'{name}' is not {label}; list it under '{belongs_under}'")
+            if defined_under:
+                elsewhere = sorted(defined_under)[0]
+                collected.append(f"'{name}' is not {label}; list it under '{elsewhere}'")
                 continue
             if name in schema.type_map:
                 collected.append(f"'{name}' is not {label}")

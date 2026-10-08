@@ -356,28 +356,34 @@ def print_schema_with_directives_preserved(schema: GraphQLSchema, source_map: di
 
 
 def _print_schema_without_empty_query_type(schema: GraphQLSchema) -> str:
-    """Drop a query root left with no fields, which GraphQL does not accept as a type.
+    """Print the schema, leaving out a query root that was left with no fields.
 
     Selecting only definitions leaves nothing on the query root, and an object type with no
-    fields is invalid. The remaining definitions compose into a model that has one.
+    fields is invalid. The remaining definitions compose into a model that has one. The root is
+    dropped before printing rather than after, so its description and the schema block naming it
+    go with it.
 
     Args:
         schema: The schema to print.
 
     Returns:
-        The printed schema without an empty query root declaration.
-
-    Note:
-        Runs before add_directives_to_schema, so a type prints without directives and the
-        declaration is matched whole.
+        The printed schema, without an empty query root.
     """
-    printed_schema = print_schema(schema)
     query_type = schema.query_type
     if query_type is None or query_type.fields:
-        return printed_schema
+        return print_schema(schema)
 
-    declaration = re.compile(rf"^type {re.escape(query_type.name)}$\n?", re.MULTILINE)
-    return declaration.sub("", printed_schema).rstrip() + "\n"
+    remaining_types = [
+        type_definition
+        for type_name, type_definition in schema.type_map.items()
+        if type_definition is not query_type and not is_introspection_type(type_name)
+    ]
+    rootless_schema = GraphQLSchema(
+        types=remaining_types,
+        directives=schema.directives,
+        description=schema.description,
+    )
+    return print_schema(rootless_schema)
 
 
 def compose_schemas_to_string(

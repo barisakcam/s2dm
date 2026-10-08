@@ -3,7 +3,7 @@
 from pathlib import Path
 
 import pytest
-from graphql import GraphQLEnumType, GraphQLSchema, print_ast, validate
+from graphql import GraphQLEnumType, GraphQLSchema, build_schema, print_ast, validate
 from graphql import print_schema as print_graphql_schema
 from graphql.error import GraphQLSyntaxError
 
@@ -200,3 +200,57 @@ class TestEveryPickableKind:
         names = picked_type_names(schema, PickedDefinitions(**{argument_name: ALL}))
 
         assert names, f"'{argument_name}: []' kept nothing; picked_type_names may not handle it"
+
+
+class TestPrintedRootRemoval:
+    def test_a_documented_root_takes_its_description_with_it(self, tmp_path: Path) -> None:
+        schema_path = tmp_path / "documented.graphql"
+        schema_path.write_text('scalar DateTime\n"""The root."""\ntype Query { a: String }\nenum FuelType { PETROL }\n')
+        schema = load_schema([schema_path])
+        query = parse_selection_query('query Selection @pick(enums: ["FuelType"]) {}')
+
+        printed = print_schema_with_directives_preserved(prune_schema_using_query_selection(schema, query))
+
+        assert "The root." not in printed
+        assert build_schema(printed).type_map["FuelType"].description is None
+
+    def test_a_renamed_root_leaves_no_dangling_schema_block(self, tmp_path: Path) -> None:
+        schema_path = tmp_path / "renamed.graphql"
+        schema_path.write_text("schema { query: RootQuery }\nenum FuelType { PETROL }\ntype RootQuery { a: String }\n")
+        schema = load_schema([schema_path])
+        query = parse_selection_query('query Selection @pick(enums: ["FuelType"]) {}')
+
+        printed = print_schema_with_directives_preserved(prune_schema_using_query_selection(schema, query))
+
+        assert "RootQuery" not in printed
+        build_schema(printed)
+
+
+class TestSharedNames:
+    def test_a_type_and_a_directive_may_share_a_name(self, tmp_path: Path) -> None:
+        schema_path = tmp_path / "shared.graphql"
+        schema_path.write_text(
+            "directive @unit(name: String) on FIELD_DEFINITION\nscalar unit\ntype Query { a: String }\n"
+        )
+
+        def pick(argument: str) -> str:
+            schema = load_schema([schema_path])
+            query = parse_selection_query(f"query Selection @pick({argument}) {{}}")
+            return print_schema_with_directives_preserved(prune_schema_using_query_selection(schema, query))
+
+        assert "scalar unit" in pick('scalars: ["unit"]')
+        assert "directive @unit" in pick('directives: ["unit"]')
+
+
+class TestPrintedSchemaDescription:
+    def test_a_documented_schema_keeps_its_description(self, tmp_path: Path) -> None:
+        schema_path = tmp_path / "documented.graphql"
+        schema_path.write_text(
+            '"""A documented model."""\nschema { query: Query }\ntype Query { a: String }\nenum FuelType { PETROL }\n'
+        )
+        schema = load_schema([schema_path])
+        query = parse_selection_query('query Selection @pick(enums: ["FuelType"]) {}')
+
+        printed = print_schema_with_directives_preserved(prune_schema_using_query_selection(schema, query))
+
+        assert "A documented model" in printed
