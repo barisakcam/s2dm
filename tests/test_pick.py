@@ -230,7 +230,11 @@ class TestSharedNames:
     def test_a_type_and_a_directive_may_share_a_name(self, tmp_path: Path) -> None:
         schema_path = tmp_path / "shared.graphql"
         schema_path.write_text(
-            "directive @unit(name: String) on FIELD_DEFINITION\nscalar unit\ntype Query { a: String }\n"
+            "directive @unit(name: String) on FIELD_DEFINITION\n"
+            "scalar unit\n"
+            "directive @grade on FIELD_DEFINITION\n"
+            "enum grade { A }\n"
+            "type Query { a: String }\n"
         )
 
         def pick(argument: str) -> str:
@@ -240,6 +244,8 @@ class TestSharedNames:
 
         assert "scalar unit" in pick('scalars: ["unit"]')
         assert "directive @unit" in pick('directives: ["unit"]')
+        assert "enum grade" in pick('enums: ["grade"]')
+        assert "directive @grade" in pick('directives: ["grade"]')
 
 
 class TestPrintedSchemaDescription:
