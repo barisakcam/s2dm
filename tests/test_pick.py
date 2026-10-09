@@ -9,10 +9,12 @@ from graphql.error import GraphQLSyntaxError
 
 from s2dm.exporters.utils.pick import (
     ALL,
-    ARGUMENT_FOR_KIND,
+    ARGUMENTS,
+    DIRECTIVES_ARGUMENT,
     PickedDefinitions,
     extract_and_validate_picks,
     parse_selection_query,
+    picked_directive_names,
     picked_type_names,
 )
 from s2dm.exporters.utils.schema_loader import (
@@ -193,13 +195,18 @@ class TestPrintedOutput:
 class TestEveryPickableKind:
     """Guards the pairing that validation and collection each spell out separately."""
 
-    @pytest.mark.parametrize("argument_name", [name for _kind, name in ARGUMENT_FOR_KIND])
+    @pytest.mark.parametrize("argument_name", ARGUMENTS)
     def test_keeping_every_definition_of_a_kind_keeps_something(self, argument_name: str) -> None:
         schema = load_schema([SCHEMA_PATH])
+        picked = PickedDefinitions(**{argument_name: ALL})
 
-        names = picked_type_names(schema, PickedDefinitions(**{argument_name: ALL}))
+        names = (
+            picked_directive_names(schema, picked)
+            if argument_name == DIRECTIVES_ARGUMENT
+            else picked_type_names(schema, picked)
+        )
 
-        assert names, f"'{argument_name}: []' kept nothing; picked_type_names may not handle it"
+        assert names, f"'{argument_name}: []' kept nothing; the kind may be missing from a pairing"
 
 
 class TestPrintedRootRemoval:
